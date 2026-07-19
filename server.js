@@ -112,9 +112,7 @@ function connectToAisStream() {
   });
 
   socket.on("close", (code, reasonBuffer) => {
-  const reason = reasonBuffer
-   ?.toString() 
-   :"No reason provided";
+  const reason = reasonBuffer && reasonBuffer.length ? reasonBuffer.toString() : "No reason provided";
 
   console.log(
     `AISstream disconnected. Code: ${code}. Reason: ${reason}`
