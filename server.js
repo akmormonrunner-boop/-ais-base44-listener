@@ -1,7 +1,5 @@
-
 const express = require("express");
 const WebSocket = require("ws");
-const axios = require("axios");
 
 const app = express();
 
@@ -19,6 +17,7 @@ const trackedMmsis = (process.env.VESSEL_MMSI_LIST || "")
 let socket = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
+
 let reconnectAttempts = 0;
 let lastAisMessageTime = null;
 let lastPongTime = null;
@@ -26,6 +25,12 @@ let lastPongTime = null;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const PONG_TIMEOUT_MS = 90000;
 const MAX_RECONNECT_DELAY_MS = 60000;
+
+/*
+|--------------------------------------------------------------------------
+| Environment-variable checks
+|--------------------------------------------------------------------------
+*/
 
 function validateEnvironmentVariables() {
   const missingVariables = [];
@@ -57,6 +62,12 @@ function validateEnvironmentVariables() {
   return true;
 }
 
+/*
+|--------------------------------------------------------------------------
+| Timer management
+|--------------------------------------------------------------------------
+*/
+
 function clearHeartbeatTimer() {
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
@@ -70,6 +81,12 @@ function clearReconnectTimer() {
     reconnectTimer = null;
   }
 }
+
+/*
+|--------------------------------------------------------------------------
+| AIS reconnect handling
+|--------------------------------------------------------------------------
+*/
 
 function scheduleReconnect(reason) {
   clearHeartbeatTimer();
@@ -96,6 +113,12 @@ function scheduleReconnect(reason) {
     connectToAisstream();
   }, reconnectDelay);
 }
+
+/*
+|--------------------------------------------------------------------------
+| AIS data helpers
+|--------------------------------------------------------------------------
+*/
 
 function isValidCoordinate(latitude, longitude) {
   return (
@@ -130,31 +153,78 @@ function getAisTimestamp(metadata) {
   return parsedDate.toISOString();
 }
 
+function getNumberOrNull(value) {
+  const convertedValue = Number(value);
+
+  return Number.isFinite(convertedValue)
+    ? convertedValue
+    : null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Send data to Base44
+|--------------------------------------------------------------------------
+*/
+
 async function sendToBase44(payload, description) {
   try {
-    const response = await axios.post(BASE44_FUNCTION_URL, payload, {
+    const response = await fetch(BASE44_FUNCTION_URL, {
+      method: "POST",
+
       headers: {
         "Content-Type": "application/json",
         "x-ais-ingest-token": AIS_INGEST_TOKEN
       },
-      timeout: 15000
+
+      body: JSON.stringify(payload),
+
+      signal: AbortSignal.timeout(15000)
     });
+
+    const responseText = await response.text();
+
+    let responseData;
+
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = responseText;
+    }
+
+    if (!response.ok) {
+      console.error(
+        `${description} failed with HTTP ${response.status}:`,
+        responseData
+      );
+
+      return false;
+    }
 
     console.log(
       `${description} successfully sent to Base44:`,
-      JSON.stringify(response.data)
+      typeof responseData === "string"
+        ? responseData
+        : JSON.stringify(responseData)
     );
-  } catch (error) {
-    const status = error.response?.status;
-    const responseData = error.response?.data;
 
-    console.error(
-      `${description} failed:`,
-      status || error.message,
-      responseData || ""
-    );
+    return true;
+  } catch (error) {
+    if (error.name === "TimeoutError") {
+      console.error(`${description} failed: Base44 request timed out.`);
+    } else {
+      console.error(`${description} failed:`, error.message);
+    }
+
+    return false;
   }
 }
+
+/*
+|--------------------------------------------------------------------------
+| Process vessel position reports
+|--------------------------------------------------------------------------
+*/
 
 async function processPositionReport(message) {
   const metadata = message.MetaData || {};
@@ -175,7 +245,7 @@ async function processPositionReport(message) {
   const longitude = Number(positionReport.Longitude);
 
   if (!isValidCoordinate(latitude, longitude)) {
-    console.log(`Invalid coordinates ignored for MMSI ${mmsi}.`, {
+    console.log(`Invalid coordinates ignored for MMSI ${mmsi}:`, {
       latitude: positionReport.Latitude,
       longitude: positionReport.Longitude
     });
@@ -183,42 +253,54 @@ async function processPositionReport(message) {
     return;
   }
 
-  const speed = Number(positionReport.Sog);
-  const course = Number(positionReport.Cog);
-  const heading = Number(positionReport.TrueHeading);
+  const speed = getNumberOrNull(positionReport.Sog);
+  const course = getNumberOrNull(positionReport.Cog);
+  const heading = getNumberOrNull(positionReport.TrueHeading);
 
   const payload = {
     message_type: "PositionReport",
+
     mmsi,
-    vessel_name: metadata.ShipName || null,
+
+    vessel_name:
+      metadata.ShipName ||
+      null,
+
     latitude,
     longitude,
 
-    speed: Number.isFinite(speed) ? speed : null,
-    speed_over_ground: Number.isFinite(speed) ? speed : null,
+    speed,
+    speed_over_ground: speed,
 
-    course: Number.isFinite(course) ? course : null,
-    course_over_ground: Number.isFinite(course) ? course : null,
+    course,
+    course_over_ground: course,
 
-    heading: Number.isFinite(heading) ? heading : null,
-    true_heading: Number.isFinite(heading) ? heading : null,
+    heading,
+    true_heading: heading,
 
     navigation_status:
       positionReport.NavigationalStatus !== undefined
         ? positionReport.NavigationalStatus
         : null,
 
+    ais_report_time: getAisTimestamp(metadata),
+
     last_updated: new Date().toISOString(),
-    ais_report_time: getAisTimestamp(metadata)
+
+    last_database_update: new Date().toISOString(),
+
+    last_updated_by: "AIS webhook (Railway)",
+
+    active: true
   };
 
   console.log("AIS position received:", {
     mmsi,
     latitude,
     longitude,
-    speed: payload.speed,
-    course: payload.course,
-    heading: payload.heading,
+    speed,
+    course,
+    heading,
     ais_report_time: payload.ais_report_time
   });
 
@@ -227,6 +309,12 @@ async function processPositionReport(message) {
     `Position update for vessel ${mmsi}`
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| Process vessel static and voyage data
+|--------------------------------------------------------------------------
+*/
 
 async function processShipStaticData(message) {
   const metadata = message.MetaData || {};
@@ -245,6 +333,7 @@ async function processShipStaticData(message) {
 
   const payload = {
     message_type: "ShipStaticData",
+
     mmsi,
 
     vessel_name:
@@ -258,7 +347,9 @@ async function processShipStaticData(message) {
       staticData.Callsign ||
       null,
 
-    destination: staticData.Destination || null,
+    destination:
+      staticData.Destination ||
+      null,
 
     eta:
       staticData.Eta ||
@@ -270,8 +361,15 @@ async function processShipStaticData(message) {
       staticData.ShipType ||
       null,
 
+    ais_report_time: getAisTimestamp(metadata),
+
     last_updated: new Date().toISOString(),
-    ais_report_time: getAisTimestamp(metadata)
+
+    last_database_update: new Date().toISOString(),
+
+    last_updated_by: "AIS webhook (Railway)",
+
+    active: true
   };
 
   console.log("AIS static data received:", {
@@ -287,6 +385,12 @@ async function processShipStaticData(message) {
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| AIS heartbeat
+|--------------------------------------------------------------------------
+*/
+
 function startHeartbeat() {
   clearHeartbeatTimer();
 
@@ -294,20 +398,21 @@ function startHeartbeat() {
 
   heartbeatTimer = setInterval(() => {
     if (!socket) {
-      scheduleReconnect("socket does not exist");
+      scheduleReconnect("AIS socket does not exist");
       return;
     }
 
     if (socket.readyState !== WebSocket.OPEN) {
-      scheduleReconnect("socket is not open");
+      scheduleReconnect("AIS socket is not open");
       return;
     }
 
-    const millisecondsSinceLastPong = Date.now() - lastPongTime;
+    const millisecondsSinceLastPong =
+      Date.now() - lastPongTime;
 
     if (millisecondsSinceLastPong > PONG_TIMEOUT_MS) {
       console.log(
-        "AISstream did not respond to heartbeat. Restarting connection."
+        "AISstream did not respond to the heartbeat. Restarting connection."
       );
 
       socket.terminate();
@@ -327,6 +432,12 @@ function startHeartbeat() {
     }
   }, HEARTBEAT_INTERVAL_MS);
 }
+
+/*
+|--------------------------------------------------------------------------
+| Connect to AISstream
+|--------------------------------------------------------------------------
+*/
 
 function connectToAisstream() {
   if (!validateEnvironmentVariables()) {
@@ -407,7 +518,12 @@ function connectToAisstream() {
 
       if (messageType === "ShipStaticData") {
         await processShipStaticData(message);
+        return;
       }
+
+      console.log(
+        `AIS message type ignored: ${messageType || "unknown"}`
+      );
     } catch (error) {
       console.error(
         "AIS message could not be processed:",
@@ -418,21 +534,28 @@ function connectToAisstream() {
 
   socket.on("pong", () => {
     lastPongTime = Date.now();
-    console.log("AISstream heartbeat response received.");
+
+    console.log(
+      "AISstream heartbeat response received."
+    );
   });
 
   socket.on("close", (code, reasonBuffer) => {
     const reason =
-      reasonBuffer?.toString() || "No reason provided";
+      reasonBuffer?.toString() ||
+      "No reason provided";
 
     console.log(
       `AISstream connection closed. Code: ${code}. Reason: ${reason}`
     );
 
     clearHeartbeatTimer();
+
     socket = null;
 
-    scheduleReconnect(`connection closed with code ${code}`);
+    scheduleReconnect(
+      `connection closed with code ${code}`
+    );
   });
 
   socket.on("error", (error) => {
@@ -447,6 +570,12 @@ function connectToAisstream() {
   });
 }
 
+/*
+|--------------------------------------------------------------------------
+| Railway health-check page
+|--------------------------------------------------------------------------
+*/
+
 app.get("/", (req, res) => {
   const connectionStates = {
     [WebSocket.CONNECTING]: "connecting",
@@ -458,29 +587,36 @@ app.get("/", (req, res) => {
   res.json({
     status: "running",
 
-    aisConnection:
-      socket
-        ? connectionStates[socket.readyState]
-        : "disconnected",
+    aisConnection: socket
+      ? connectionStates[socket.readyState]
+      : "disconnected",
 
     trackedVessels: trackedMmsis.length,
+
     trackedMmsis,
 
-    lastAisMessageTime:
-      lastAisMessageTime
-        ? new Date(lastAisMessageTime).toISOString()
-        : null,
+    lastAisMessageTime: lastAisMessageTime
+      ? new Date(lastAisMessageTime).toISOString()
+      : null,
 
-    lastHeartbeatResponse:
-      lastPongTime
-        ? new Date(lastPongTime).toISOString()
-        : null,
+    lastHeartbeatResponse: lastPongTime
+      ? new Date(lastPongTime).toISOString()
+      : null,
 
     reconnectAttempts
   });
 });
 
+/*
+|--------------------------------------------------------------------------
+| Start Railway service
+|--------------------------------------------------------------------------
+*/
+
 app.listen(PORT, () => {
-  console.log(`Railway health server running on port ${PORT}.`);
+  console.log(
+    `Railway health server running on port ${PORT}.`
+  );
+
   connectToAisstream();
 });
