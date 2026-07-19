@@ -111,7 +111,20 @@ function connectToAisStream() {
     console.error("AISstream error:", error.message);
   });
 
-  socket.on("close", () => {
+  socket.on("close", (code, reasonBuffer) => {
+  const reason = reasonBuffer?.toString() || "No reason provided";
+
+  console.log(
+    `AISstream disconnected. Code: ${code}. Reason: ${reason}`
+  );
+
+  console.log("Reconnecting to AISstream in 5 seconds...");
+
+  setTimeout(() => {
+    connectToAisStream();
+  }, 5000);
+});
+ .on("close", () => {
     console.log("AISstream disconnected. Reconnecting in 5 seconds...");
 
     setTimeout(() => {
