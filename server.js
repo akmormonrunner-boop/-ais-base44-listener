@@ -73,7 +73,11 @@ function connectToAisStream() {
 
   console.log("Connecting to AISstream...");
 
-  socket = new WebSocket(AISSTREAM_URL);
+ socket = new WebSocket(AISSTREAM_URL, {
+  handshakeTimeout: 30000
+});
+
+  UI 
 
   socket.on("open", () => {
     console.log("Connected to AISstream.");
@@ -104,13 +108,17 @@ function connectToAisStream() {
       await processAisMessage(data);
     } catch (error) {
       console.error("AIS message error:", error.message);
-    }
-  });
 
-  socket.on("error", (error) => {
-    console.error("AISstream error:", error.message);
-  });
-
+socket.on("error", (error) => {
+  console.error("========== AISSTREAM ERROR ==========");
+  console.error("Message:", error.message);
+  console.error("Code:", error.code);
+  console.error("Name:", error.name);
+  console.error(error);
+  console.error("=====================================");
+});
+     
+    
   socket.on("close", (code, reasonBuffer) => {
   const reason = reasonBuffer && reasonBuffer.length ? reasonBuffer.toString() : "No reason provided";
 
