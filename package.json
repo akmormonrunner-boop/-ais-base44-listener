@@ -1,0 +1,14 @@
+{
+  "name": "ais-base44-listener",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AISstream listener that forwards vessel positions to Base44.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.0"
+  }
+}
