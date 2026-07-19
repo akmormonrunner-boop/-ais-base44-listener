@@ -7,510 +7,256 @@ const app = express();
 app.use(express.json());
 
 /*
- * ============================================================
- * NORTHSTAR MARITIME AIS BRIDGE — VERSION 3
- *
- * AISstream → Railway → Base44
- * ============================================================
- */
+============================================================
+ NORTHSTAR MARITIME AIS BRIDGE
+ Version 3.1
+ AISstream → Railway → Base44
+============================================================
+*/
 
 const PORT = Number(process.env.PORT || 8080);
+
+const AISSTREAM_URL = "wss://stream.aisstream.io/v0/stream";
 
 const AISSTREAM_API_KEY = process.env.AISSTREAM_API_KEY;
 const BASE44_FUNCTION_URL = process.env.BASE44_FUNCTION_URL;
 const AIS_INGEST_TOKEN = process.env.AIS_INGEST_TOKEN;
 
-/*
- * AMHS fleet MMSIs
- *
- * These MMSIs are included directly in the code.
- * You no longer need the Railway VESSEL_MMSI_LIST variable.
- */
-const AMHS_VESSELS = Object.freeze({
-  "367144000": {
-    name: "MV Columbia"
-  },
-  "338761000": {
-    name: "MV LeConte"
-  },
-  "338205000": {
-    name: "MV Aurora"
-  },
-  "368067220": {
-    name: "MV Hubbard"
-  },
-  "368015640": {
-    name: "MV Tazlina"
-  },
-  "303267000": {
-    name: "MV Tustumena"
-  },
-  "368250000": {
-    name: "MV Kennicott"
-  },
-  "366919560": {
-    name: "MV Lituya"
-  }
-});
-
-const vesselMmsiList = Object.keys(AMHS_VESSELS);
-
-/*
- * AISstream configuration
- */
-const AISSTREAM_URL =
-  "wss://stream.aisstream.io/v0/stream";
-
-const AIS_MESSAGE_TYPES = [
-  "PositionReport",
-  "StandardClassBPositionReport",
-  "ExtendedClassBPositionReport",
-  "ShipStaticData",
-  "StaticDataReport"
-];
-
-/*
- * Timing configuration
- */
-const HEARTBEAT_INTERVAL_MS = 30_000;
-const MAX_RECONNECT_DELAY_MS = 60_000;
-const BASE44_REQUEST_TIMEOUT_MS = 15_000;
-const BASE44_RETRY_ATTEMPTS = 3;
-
-/*
- * Runtime state
- */
-let aisSocket = null;
-let heartbeatTimer = null;
-let reconnectTimer = null;
-let reconnectAttempts = 0;
-let pongReceived = true;
-let shuttingDown = false;
-
-/*
- * Prevent sending identical position messages repeatedly.
- */
-const lastPositionByMmsi = new Map();
-
-/*
- * Service statistics
- */
-const stats = {
-  serviceStartedAt: new Date().toISOString(),
-  websocketConnections: 0,
-  websocketReconnects: 0,
-  messagesReceived: 0,
-  positionMessagesReceived: 0,
-  staticMessagesReceived: 0,
-  messagesIgnored: 0,
-  base44SuccessfulUpdates: 0,
-  base44FailedUpdates: 0,
-  duplicatePositionsSkipped: 0,
-  lastAisMessageAt: null,
-  lastPositionAt: null,
-  lastBase44SuccessAt: null,
-  lastWebSocketOpenAt: null,
-  lastWebSocketCloseAt: null,
-  lastError: null
+const AMHS_VESSELS = {
+  "367144000": "MV Columbia",
+  "338761000": "MV LeConte",
+  "338205000": "MV Aurora",
+  "368067220": "MV Hubbard",
+  "368015640": "MV Tazlina",
+  "303267000": "MV Tustumena",
+  "368250000": "MV Kennicott",
+  "366919560": "MV Lituya"
 };
 
-/*
- * ============================================================
- * EXPRESS ENDPOINTS
- * ============================================================
- */
+const TRACKED_MMSIS = Object.keys(AMHS_VESSELS);
 
-app.get("/", (req, res) => {
+let socket = null;
+
+console.log("NorthStar Maritime AIS Bridge starting...");
+app.get("/", (_req, res) => {
   res.status(200).json({
     service: "NorthStar Maritime AIS Bridge",
-    version: "3.0.0",
+    version: "3.1",
     status: "running",
-    aisConnected:
-      aisSocket?.readyState === WebSocket.OPEN,
-    trackedVesselCount: vesselMmsiList.length,
-    trackedVessels: AMHS_VESSELS,
-    serviceStartedAt: stats.serviceStartedAt
-  });
-});
-
-app.get("/health", (req, res) => {
-  const connected =
-    aisSocket?.readyState === WebSocket.OPEN;
-
-  res.status(connected ? 200 : 503).json({
-    status: connected ? "healthy" : "degraded",
-    aisConnected: connected,
-    trackedVesselCount: vesselMmsiList.length,
-    lastAisMessageAt: stats.lastAisMessageAt,
-    lastBase44SuccessAt: stats.lastBase44SuccessAt
-  });
-});
-
-app.get("/stats", (req, res) => {
-  res.status(200).json({
-    ...stats,
-    aisConnected:
-      aisSocket?.readyState === WebSocket.OPEN,
-    reconnectAttempts,
-    trackedVessels: vesselMmsiList.map((mmsi) => ({
+    aisConnected: socket?.readyState === WebSocket.OPEN,
+    trackedVesselCount: TRACKED_MMSIS.length,
+    trackedVessels: TRACKED_MMSIS.map((mmsi) => ({
       mmsi,
-      name: AMHS_VESSELS[mmsi].name,
-      lastPosition:
-        lastPositionByMmsi.get(mmsi) || null
+      name: AMHS_VESSELS[mmsi]
     }))
   });
 });
 
-/*
- * Start Railway's web server first.
- */
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("================================================");
-  console.log("NorthStar Maritime AIS Bridge Version 3");
-  console.log(`Railway web server running on port ${PORT}.`);
-  console.log("================================================");
+app.get("/health", (_req, res) => {
+  const connected = socket?.readyState === WebSocket.OPEN;
 
-  const missingVariables = getMissingVariables();
-
-  if (missingVariables.length > 0) {
-    const errorMessage =
-      `Missing Railway variables: ${missingVariables.join(", ")}`;
-
-    stats.lastError = errorMessage;
-    console.error(errorMessage);
-    return;
-  }
-
-  console.log(`Tracking ${vesselMmsiList.length} AMHS vessels:`);
-
-  for (const mmsi of vesselMmsiList) {
-    console.log(
-      `- ${AMHS_VESSELS[mmsi].name}: ${mmsi}`
-    );
-  }
-
-  connectToAISStream();
+  res.status(connected ? 200 : 503).json({
+    status: connected ? "healthy" : "degraded",
+    aisConnected: connected,
+    trackedVesselCount: TRACKED_MMSIS.length
+  });
 });
 
-/*
- * ============================================================
- * AISSTREAM CONNECTION
- * ============================================================
- */
-
-function connectToAISStream() {
-  if (shuttingDown) {
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Railway web server listening on port ${PORT}`);
+});
+function connectToAisStream() {
+  if (!AISSTREAM_API_KEY) {
+    console.error("Missing AISSTREAM_API_KEY");
     return;
   }
-
-  if (
-    aisSocket &&
-    (
-      aisSocket.readyState === WebSocket.OPEN ||
-      aisSocket.readyState === WebSocket.CONNECTING
-    )
-  ) {
-    console.log(
-      "AISstream connection already open or connecting."
-    );
-    return;
-  }
-
-  clearReconnectTimer();
-  stopHeartbeat();
 
   console.log("Connecting to AISstream...");
 
-  const socket = new WebSocket(AISSTREAM_URL);
-  aisSocket = socket;
+  socket = new WebSocket(AISSTREAM_URL);
 
   socket.on("open", () => {
-    if (socket !== aisSocket) {
-      return;
-    }
-
-    reconnectAttempts = 0;
-    pongReceived = true;
-
-    stats.websocketConnections += 1;
-    stats.lastWebSocketOpenAt =
-      new Date().toISOString();
-
     console.log("Connected to AISstream.");
 
-    /*
-     * AISstream requires a subscription message shortly
-     * after the WebSocket opens.
-     */
     const subscription = {
       APIKey: AISSTREAM_API_KEY,
-
-      /*
-       * Worldwide bounding box.
-       * The MMSI list limits the subscription to AMHS vessels.
-       */
-      BoundingBoxes: [
-        [
-          [-90, -180],
-          [90, 180]
-        ]
-      ],
-
-      FiltersShipMMSI: vesselMmsiList,
-
-      FilterMessageTypes: AIS_MESSAGE_TYPES
+      BoundingBoxes: [[[-90, -180], [90, 180]]],
+      FiltersShipMMSI: TRACKED_MMSIS,
+      FilterMessageTypes: [
+        "PositionReport",
+        "StandardClassBPositionReport",
+        "ExtendedClassBPositionReport",
+        "ShipStaticData",
+        "StaticDataReport"
+      ]
     };
 
-    try {
-      socket.send(JSON.stringify(subscription));
+    socket.send(JSON.stringify(subscription));
 
-      console.log(
-        `AIS subscription sent for ${vesselMmsiList.length} vessels:`
-      );
-
-      for (const mmsi of vesselMmsiList) {
-        console.log(
-          `- ${AMHS_VESSELS[mmsi].name}: ${mmsi}`
-        );
-      }
-
-      console.log(
-        `AIS message types: ${AIS_MESSAGE_TYPES.join(", ")}`
-      );
-
-      startHeartbeat(socket);
-    } catch (error) {
-      recordError(
-        "Unable to send AIS subscription",
-        error
-      );
-
-      socket.terminate();
-    }
+    console.log(
+      `AIS subscription sent for ${TRACKED_MMSIS.length} vessels.`
+    );
   });
 
   socket.on("message", async (rawData) => {
-    if (socket !== aisSocket) {
-      return;
+    try {
+      const data = JSON.parse(rawData.toString());
+      await processAisMessage(data);
+    } catch (error) {
+      console.error("AIS message error:", error.message);
     }
-
-    await processAISMessage(rawData);
-  });
-
-  socket.on("pong", () => {
-    if (socket !== aisSocket) {
-      return;
-    }
-
-    pongReceived = true;
-    console.log(
-      "AISstream heartbeat response received."
-    );
   });
 
   socket.on("error", (error) => {
-    if (socket !== aisSocket) {
-      return;
-    }
-
-    recordError(
-      "AISstream WebSocket error",
-      error
-    );
+    console.error("AISstream error:", error.message);
   });
 
-  socket.on("close", (code, reasonBuffer) => {
-    if (socket !== aisSocket) {
-      return;
-    }
+  socket.on("close", () => {
+    console.log("AISstream disconnected. Reconnecting in 5 seconds...");
 
-    stopHeartbeat();
-
-    const reason =
-      reasonBuffer?.toString() ||
-      "No reason provided";
-
-    stats.lastWebSocketCloseAt =
-      new Date().toISOString();
-
-    console.log(
-      `AISstream connection closed. Code: ${code}. Reason: ${reason}`
-    );
-
-    aisSocket = null;
-
-    if (!shuttingDown) {
-      scheduleReconnect();
-    }
+    setTimeout(() => {
+      connectToAisStream();
+    }, 5000);
   });
 }
-
-/*
- * ============================================================
- * AIS MESSAGE PROCESSING
- * ============================================================
- */
-
-async function processAISMessage(rawData) {
-  let aisData;
-
-  try {
-    aisData = JSON.parse(rawData.toString());
-  } catch (error) {
-    stats.messagesIgnored += 1;
-
-    recordError(
-      "AISstream sent invalid JSON",
-      error
-    );
-
+async function processAisMessage(data) {
+  if (!data.MessageType) {
     return;
   }
 
-  /*
-   * AISstream may return errors through the WebSocket,
-   * for example an invalid API key or subscription.
-   */
-  if (aisData.error) {
-    const errorMessage =
-      `AISstream subscription error: ${aisData.error}`;
-
-    stats.lastError = errorMessage;
-    console.error(errorMessage);
-    return;
-  }
-
-  stats.messagesReceived += 1;
-  stats.lastAisMessageAt =
-    new Date().toISOString();
-
-  const messageType =
-    String(aisData.MessageType || "").trim();
+  const messageType = data.MessageType;
+  const message = data.Message || {};
+  const body = message[messageType] || {};
 
   const metadata =
-    aisData.MetaData ||
-    aisData.Metadata ||
+    data.MetaData ||
+    data.Metadata ||
     {};
 
-  /*
-   * AISstream places the actual message body under:
-   *
-   * Message.PositionReport
-   * Message.ShipStaticData
-   * Message.StandardClassBPositionReport
-   * etc.
-   */
-  const messageContainer =
-    aisData.Message || {};
-
-  const messageBody =
-    messageContainer[messageType] ||
-    messageContainer;
-
-  const mmsi = extractMmsi(
-    metadata,
-    messageBody
+  const mmsi = String(
+    metadata.MMSI ||
+    body.UserID ||
+    body.MMSI ||
+    ""
   );
 
-  console.log(
-    `AIS message received: ${
-      messageType || "Unknown"
-    }${mmsi ? ` | MMSI ${mmsi}` : ""}`
-  );
-
-  if (!messageType) {
-    stats.messagesIgnored += 1;
-    console.log(
-      "AIS message ignored because MessageType was missing."
-    );
+  if (!TRACKED_MMSIS.includes(mmsi)) {
     return;
   }
 
-  if (!mmsi) {
-    stats.messagesIgnored += 1;
-    console.log(
-      "AIS message ignored because no MMSI was found."
+  console.log("--------------------------------");
+  console.log("Vessel:", AMHS_VESSELS[mmsi]);
+  console.log("MMSI:", mmsi);
+  console.log("Message:", messageType);
+
+  if (
+    messageType === "PositionReport" ||
+    messageType === "StandardClassBPositionReport" ||
+    messageType === "ExtendedClassBPositionReport"
+  ) {
+    await sendPositionToBase44(
+      mmsi,
+      body,
+      metadata
     );
-    return;
-  }
-
-  if (!AMHS_VESSELS[mmsi]) {
-    stats.messagesIgnored += 1;
-    console.log(
-      `Ignoring untracked MMSI ${mmsi}.`
-    );
-    return;
-  }
-
-  switch (messageType) {
-    case "PositionReport":
-    case "StandardClassBPositionReport":
-    case "ExtendedClassBPositionReport":
-      stats.positionMessagesReceived += 1;
-
-      await handlePositionReport({
-        messageType,
-        mmsi,
-        metadata,
-        messageBody
-      });
-
-      break;
-
-    case "ShipStaticData":
-    case "StaticDataReport":
-      stats.staticMessagesReceived += 1;
-
-      await handleStaticData({
-        messageType,
-        mmsi,
-        metadata,
-        messageBody
-      });
-
-      break;
-
-    default:
-      stats.messagesIgnored += 1;
-
-      console.log(
-        `No handler configured for ${messageType}.`
-      );
   }
 }
-
-/*
- * ============================================================
- * POSITION REPORTS
- * ============================================================
- */
-
-async function handlePositionReport({
-  messageType,
+async function sendPositionToBase44(
   mmsi,
-  metadata,
-  messageBody
-}) {
-  const vessel =
-    AMHS_VESSELS[mmsi];
+  body,
+  metadata
+) {
+  if (!BASE44_FUNCTION_URL) {
+    console.error("Missing BASE44_FUNCTION_URL");
+    return;
+  }
 
-  const latitude = firstValidNumber([
-    messageBody.Latitude,
-    messageBody.latitude,
-    metadata.Latitude,
-    metadata.latitude
-  ]);
+  if (!AIS_INGEST_TOKEN) {
+    console.error("Missing AIS_INGEST_TOKEN");
+    return;
+  }
 
-  const longitude = firstValidNumber([
-    messageBody.Longitude,
-    messageBody.longitude,
-    metadata.Longitude,
-    metadata.longitude
-  ]);
+  const latitude =
+    body.Latitude ??
+    body.latitude ??
+    metadata.Latitude ??
+    metadata.latitude ??
+    null;
 
-  const speed = normalizeAisNumber(
-    firstValidNumber([
-      messageBody.Sog,
-      messageBody.SOG,
-      messageBody.SpeedOverGround,
-      metadata.ShipSpeed
+  const longitude =
+    body.Longitude ??
+    body.longitude ??
+    metadata.Longitude ??
+    metadata.longitude ??
+    null;
+
+  const speed =
+    body.Sog ??
+    body.SOG ??
+    body.SpeedOverGround ??
+    metadata.ShipSpeed ??
+    null;
+
+  const course =
+    body.Cog ??
+    body.COG ??
+    body.CourseOverGround ??
+    metadata.ShipCourse ??
+    null;
+
+  const heading =
+    body.TrueHeading ??
+    body.Heading ??
+    metadata.TrueHeading ??
+    null;
+
+  if (latitude === null || longitude === null) {
+    console.log("Position skipped because coordinates were missing.");
+    return;
+  }
+
+  const payload = {
+    mmsi,
+    vessel_name: AMHS_VESSELS[mmsi],
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+    speed: speed === null ? null : Number(speed),
+    course: course === null ? null : Number(course),
+    heading: heading === null ? null : Number(heading),
+    ais_report_time:
+      metadata.time_utc ||
+      metadata.TimeUTC ||
+      metadata.Timestamp ||
+      new Date().toISOString(),
+    received_at: new Date().toISOString()
+  };
+
+  console.log("Sending position to Base44:", payload);
+
+  const response = await fetch(
+    BASE44_FUNCTION_URL,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-ais-ingest-token": AIS_INGEST_TOKEN
+      },
+      body: JSON.stringify(payload)
+    }
+  );
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    console.error(
+      `Base44 error ${response.status}:`,
+      responseText
+    );
+    return;
+  }
+
+  console.log(
+    `Base44 updated ${AMHS_VESSELS[mmsi]} successfully.`
+  );
+}
+connectToAisStream();
