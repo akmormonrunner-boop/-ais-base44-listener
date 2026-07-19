@@ -124,13 +124,6 @@ function connectToAisStream() {
     connectToAisStream();
   }, 5000);
 });
- .on("close", () => {
-    console.log("AISstream disconnected. Reconnecting in 5 seconds...");
-
-    setTimeout(() => {
-      connectToAisStream();
-    }, 5000);
-  });
 }
 async function processAisMessage(data) {
   if (!data.MessageType) {
