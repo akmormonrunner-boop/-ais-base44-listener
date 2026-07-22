@@ -23,7 +23,14 @@ const BASE44_FUNCTION_URL = process.env.BASE44_FUNCTION_URL;
 const AIS_INGEST_TOKEN = process.env.AIS_INGEST_TOKEN;
 
 const AMHS_VESSELS = {
-  "367144000": "MV Columbia"
+  "367144000": "MV Columbia",
+  "338761000": "MV LeConte",
+  "338205000": "MV Aurora",
+  "368067220": "MV Hubbard",
+  "368015640": "MV Tazlina",
+  "303267000": "MV Tustumena",
+  "368250000": "MV Kennicott",
+  "366919560": "MV Lituya".
   
 };
 
