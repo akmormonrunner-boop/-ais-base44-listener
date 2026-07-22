@@ -87,22 +87,19 @@ function connectToAisStream() {
     console.log("Connected to AISstream.");
 
     const subscription = {
-      APIKey: AISSTREAM_API_KEY,
-      BoundingBoxes: [
-        [
-          [-90, -180],
-          [90, 180]
-        ]
-      ],
-      FiltersShipMMSI: ["367144000"], // MV Columbia
-      FilterMessageTypes: [
-        "PositionReport",
-        "StandardClassBPositionReport",
-        "ExtendedClassBPositionReport",
-        "ShipStaticData",
-        "StaticDataReport"
-      ]
-    };
+  APIKey: AISSTREAM_API_KEY,
+  BoundingBoxes: [
+    [
+      [54.0, -141.0],
+      [61.5, -129.0]
+    ]
+  ],
+  FilterMessageTypes: [
+    "PositionReport",
+    "StandardClassBPositionReport",
+    "ExtendedClassBPositionReport"
+  ]
+};
 
     socket.send(JSON.stringify(subscription));
 
@@ -173,9 +170,22 @@ async function processAisMessage(data) {
     ""
   );
 
-  if (!TRACKED_MMSIS.includes(mmsi)) {
-    return;
-  }
+  const vesselName =
+  metadata.ShipName ||
+  metadata.shipName ||
+  body.Name ||
+  body.ShipName ||
+  "Unknown";
+
+console.log("--------------------------------");
+console.log("AIS Message Received");
+console.log("MMSI:", mmsi);
+console.log("Reported Name:", vesselName);
+
+if (!TRACKED_MMSIS.includes(mmsi)) {
+  console.log("Not an AMHS vessel");
+  return;
+}
 
   console.log("--------------------------------");
   console.log("Vessel:", AMHS_VESSELS[mmsi]);
