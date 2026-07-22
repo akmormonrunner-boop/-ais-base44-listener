@@ -30,7 +30,7 @@ const AMHS_VESSELS = {
   "368015640": "MV Tazlina",
   "303267000": "MV Tustumena",
   "368250000": "MV Kennicott",
-  "366919560": "MV Lituya".
+  "366919560": "MV Lituya"
   
 };
 
@@ -94,7 +94,7 @@ function connectToAisStream() {
           [90, 180]
         ]
       ],
-      FiltersShipMMSI: TRACKED_MMSIS,
+      FiltersShipMMSI: ["367144000"], // MV Columbia
       FilterMessageTypes: [
         "PositionReport",
         "StandardClassBPositionReport",
