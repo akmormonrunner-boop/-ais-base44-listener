@@ -88,12 +88,18 @@ function connectToAisStream() {
 
     const subscription = {
   APIKey: AISSTREAM_API_KEY,
+
   BoundingBoxes: [
     [
-      [-90.0, -180.0],
-      [90.0, 180.0]
+      [-90, -180],
+      [90, 180]
     ]
   ],
+
+  FiltersShipMMSI: [
+    "367144000"
+  ],
+
   FilterMessageTypes: [
     "PositionReport",
     "StandardClassBPositionReport",
