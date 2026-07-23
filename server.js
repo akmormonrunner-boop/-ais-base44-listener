@@ -90,16 +90,9 @@ function connectToAisStream() {
   APIKey: AISSTREAM_API_KEY,
 
   BoundingBoxes: [
-  // Alaska
   [
-    [51.0, -180.0],
-    [72.0, -129.0]
-  ],
-
-  // Washington
-  [
-    [45.5, -125.0],
-    [49.1, -116.9]
+    [47.0, -180.0],
+    [61.8, -122.0]
   ]
 ],
 
