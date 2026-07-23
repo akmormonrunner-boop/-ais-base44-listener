@@ -90,8 +90,8 @@ function connectToAisStream() {
   APIKey: AISSTREAM_API_KEY,
   BoundingBoxes: [
     [
-      [54.0, -141.0],
-      [61.5, -129.0]
+      [-90.0, -180.0],
+      [90.0, 180.0]
     ]
   ],
   FilterMessageTypes: [
