@@ -108,17 +108,34 @@ function connectToAisStream() {
     );
   });
 
-  socket.on("message", async (rawData) => {
-    try {
-      const data = JSON.parse(rawData.toString());
-      await processAisMessage(data);
-    } catch (error) {
-      console.error(
-        "AIS message processing error:",
-        error.message
-      );
-    }
-  });
+ socket.on("message", async (rawData) => {
+  const rawText = rawData.toString();
+
+  // Diagnostic test for MV Columbia
+  const upperRawText = rawText.toUpperCase();
+
+  if (
+    rawText.includes("367144000") ||
+    upperRawText.includes("COLUMBIA")
+  ) {
+    console.log("======================================");
+    console.log("*** MV COLUMBIA RAW AIS MATCH ***");
+    console.log(rawText);
+    console.log("======================================");
+  }
+
+  try {
+    const data = JSON.parse(rawText);
+    await processAisMessage(data);
+  } catch (error) {
+    console.error(
+      "AIS message processing error:",
+      error.message
+    );
+  }
+});
+
+  
 
   socket.on("error", (error) => {
     console.error("========== AISSTREAM ERROR ==========");
