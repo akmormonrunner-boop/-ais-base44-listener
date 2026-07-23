@@ -116,18 +116,6 @@ function connectToAisStream() {
   }
 });
 
-  try {
-    const data = JSON.parse(rawText);
-    await processAisMessage(data);
-  } catch (error) {
-    console.error(
-      "AIS message processing error:",
-      error.message
-    );
-  }
-});
-
-  
 
   socket.on("error", (error) => {
     console.error("========== AISSTREAM ERROR ==========");
