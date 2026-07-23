@@ -86,8 +86,6 @@ function connectToAisStream() {
   socket.on("open", () => {
     console.log("Connected to AISstream.");
 
-    const subscription = {
-  APIKey: AISSTREAM_API_KEY,
 
 const subscription = {
   APIKey: AISSTREAM_API_KEY,
