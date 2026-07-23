@@ -95,7 +95,7 @@ function connectToAisStream() {
     [61.8, -122.0]
     ]
   ]
-];
+    });
 
   
     socket.send(JSON.stringify(subscription));
