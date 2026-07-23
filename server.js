@@ -104,6 +104,7 @@ const subscription = {
     console.log(
       `AIS subscription sent for ${TRACKED_MMSIS.length} vessels.`
     );
+  });
   
 
  socket.on("message", async (rawData) => {
