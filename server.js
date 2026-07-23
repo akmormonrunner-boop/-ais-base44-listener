@@ -103,17 +103,7 @@ function connectToAisStream() {
   ]
 ],
 
-  FiltersShipMMSI: [
-    "367144000"
-  ],
-
-  FilterMessageTypes: [
-    "PositionReport",
-    "StandardClassBPositionReport",
-    "ExtendedClassBPositionReport"
-  ]
-};
-
+  
     socket.send(JSON.stringify(subscription));
 
     console.log(
