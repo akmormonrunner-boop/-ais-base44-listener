@@ -89,13 +89,16 @@ function connectToAisStream() {
     const subscription = {
   APIKey: AISSTREAM_API_KEY,
 
+const subscription = {
+  APIKey: AISSTREAM_API_KEY,
+
   BoundingBoxes: [
-  [
-    [47.0, -180.0],
-    [61.8, -122.0]
+    [
+      [47.0, -180.0],
+      [61.8, -122.0]
     ]
   ]
-    });
+};
 
   
     socket.send(JSON.stringify(subscription));
@@ -103,7 +106,7 @@ function connectToAisStream() {
     console.log(
       `AIS subscription sent for ${TRACKED_MMSIS.length} vessels.`
     );
-  });
+  
 
  socket.on("message", async (rawData) => {
   try {
