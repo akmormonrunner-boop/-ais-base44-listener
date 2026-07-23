@@ -100,6 +100,7 @@ const subscription = {
 
   
     socket.send(JSON.stringify(subscription));
+   console.log("Subscription sent to AISstream.");
 
     console.log(
       `AIS subscription sent for ${TRACKED_MMSIS.length} vessels.`
