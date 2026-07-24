@@ -287,6 +287,19 @@ async function sendPositionToBase44(
     metadata.TrueHeading ??
     null;
 
+ const navigationStatusCode =
+  body.NavigationalStatus ??
+  body.NavigationStatus ??
+  body.NavStatus ??
+  metadata.NavigationalStatus ??
+  metadata.NavigationStatus ??
+  null;
+
+const navigationStatus =
+  navigationStatusCode === null
+    ? "Unknown"
+    : (NAVIGATION_STATUS[navigationStatusCode] || "Unknown");
+
   if (latitude === null || longitude === null) {
     console.log(
       "Position skipped because coordinates were missing."
@@ -302,6 +315,8 @@ async function sendPositionToBase44(
     speed: speed === null ? null : Number(speed),
     course: course === null ? null : Number(course),
     heading: heading === null ? null : Number(heading),
+   navigation_status: navigationStatus,
+  navigation_status_code: navigationStatusCode,
     ais_report_time:
       metadata.time_utc ||
       metadata.TimeUTC ||
