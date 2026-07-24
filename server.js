@@ -34,6 +34,25 @@ const AMHS_VESSELS = {
   
 };
 
+const NAVIGATION_STATUS = {
+  0: "Underway Using Engine",
+  1: "At Anchor",
+  2: "Not Under Command",
+  3: "Restricted Maneuverability",
+  4: "Constrained by Draft",
+  5: "Moored",
+  6: "Aground",
+  7: "Engaged in Fishing",
+  8: "Under Sail",
+  9: "Reserved",
+  10: "Reserved",
+  11: "Reserved",
+  12: "Reserved",
+  13: "Reserved",
+  14: "AIS-SART",
+  15: "Unknown"
+};
+
 const TRACKED_MMSIS = Object.keys(AMHS_VESSELS);
 
 let socket = null;
