@@ -54,6 +54,7 @@ const NAVIGATION_STATUS = {
 };
 
 const TRACKED_MMSIS = Object.keys(AMHS_VESSELS);
+const vesselDestinations = {};
 
 let socket = null;
 
@@ -183,6 +184,38 @@ async function processAisMessage(data) {
     data.Metadata ||
     {};
 
+if (
+  messageType === "ShipStaticData" ||
+  messageType === "StaticDataReport"
+) {
+  const staticMmsi = String(
+    metadata.MMSI ||
+    body.UserID ||
+    body.MMSI ||
+    ""
+  );
+
+  const destination = String(
+    body.Destination ||
+    body.destination ||
+    ""
+  ).trim();
+
+  if (
+    TRACKED_MMSIS.includes(staticMmsi) &&
+    destination
+  ) {
+    vesselDestinations[staticMmsi] = destination;
+
+    console.log("--------------------------------");
+    console.log("AMHS AIS Destination Updated");
+    console.log("Vessel:", AMHS_VESSELS[staticMmsi]);
+    console.log("MMSI:", staticMmsi);
+    console.log("Destination:", destination);
+    console.log("--------------------------------");
+  }
+}
+ 
   const mmsi = String(
     metadata.MMSI ||
     body.UserID ||
