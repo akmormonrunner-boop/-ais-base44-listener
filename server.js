@@ -343,6 +343,7 @@ const navigationStatus =
   const payload = {
     mmsi,
     vessel_name: AMHS_VESSELS[mmsi],
+   destination: vesselDestinations[mmsi] || null,
     latitude: Number(latitude),
     longitude: Number(longitude),
     speed: speed === null ? null : Number(speed),
